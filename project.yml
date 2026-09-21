@@ -1,0 +1,23 @@
+name: BLEInspector
+options:
+  bundleIdPrefix: com.local
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+targets:
+  BLEInspector:
+    type: application
+    platform: iOS
+    sources:
+      - BLEInspector
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.BLEInspector
+        PRODUCT_NAME: BLEInspector
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "BLE Inspector uses Bluetooth to discover and inspect nearby BLE peripherals."
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"

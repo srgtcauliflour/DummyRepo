@@ -8,6 +8,13 @@ struct BLEDevice: Identifiable {
     var rssi: Int
 }
 
+struct WritableCharacteristic: Identifiable {
+    let id: String
+    let serviceUUID: String
+    let characteristicUUID: String
+    let properties: String
+}
+
 struct ExportItem: Identifiable {
     let id = UUID()
     let url: URL
@@ -20,24 +27,28 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var connectedName: String?
     @Published var isRecording = false
     @Published var log: [String] = []
+    @Published var writableCharacteristics: [WritableCharacteristic] = []
     @Published var exportItem: ExportItem?
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var connected: CBPeripheral?
+    private var characteristicMap: [String: CBCharacteristic] = [:]
     private var events: [[String: Any]] = []
     private var recordingStart: Date?
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
+        central = CBCentralManager(delegate: self, queue: .main,
+            options: [CBCentralManagerOptionRestoreIdentifierKey: "BLEInspectorCentral"])
     }
 
     func startScan() {
         guard central.state == .poweredOn else { return }
         devices.removeAll()
         peripherals.removeAll()
-        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+        central.scanForPeripherals(withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         isScanning = true
         append("Scanning…")
     }
@@ -50,7 +61,11 @@ final class BluetoothManager: NSObject, ObservableObject {
     func connect(_ id: UUID) {
         guard let p = peripherals[id] else { return }
         stopScan()
-        central.connect(p)
+        central.connect(p, options: [
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnNotificationKey: true
+        ])
         append("Connecting to \(p.name ?? id.uuidString)…")
     }
 
@@ -66,10 +81,37 @@ final class BluetoothManager: NSObject, ObservableObject {
         append("Recording stopped")
     }
 
+    func sendHex(_ hex: String, to id: String) -> String? {
+        guard let p = connected, let c = characteristicMap[id] else { return "Characteristic unavailable" }
+        let clean = hex.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "", options: .caseInsensitive)
+        guard !clean.isEmpty, clean.count % 2 == 0 else { return "Enter complete hex bytes, e.g. 01 FF 03" }
+        var data = Data()
+        var index = clean.startIndex
+        while index < clean.endIndex {
+            let next = clean.index(index, offsetBy: 2)
+            guard let byte = UInt8(clean[index..<next], radix: 16) else { return "Invalid hex" }
+            data.append(byte)
+            index = next
+        }
+        let type: CBCharacteristicWriteType
+        if c.properties.contains(.write) { type = .withResponse }
+        else if c.properties.contains(.writeWithoutResponse) { type = .withoutResponse }
+        else { return "Characteristic is not writable" }
+        p.writeValue(data, for: c, type: type)
+        let h = data.map { String(format: "%02X", $0) }.joined()
+        append("→ \(c.uuid.uuidString): \(h)")
+        record(type: "write", service: c.service?.uuid, characteristic: c.uuid, data: data,
+               extra: ["writeType": type == .withResponse ? "withResponse" : "withoutResponse"])
+        return nil
+    }
+
     func exportCapture() {
         var root: [String: Any] = [
             "created": ISO8601DateFormatter().string(from: Date()),
-            "events": events
+            "events": events,
+            "writableCharacteristics": writableCharacteristics.map {
+                ["service": $0.serviceUUID, "characteristic": $0.characteristicUUID, "properties": $0.properties]
+            }
         ]
         if let p = connected {
             root["device"] = ["name": p.name ?? "Unknown", "identifier": p.identifier.uuidString]
@@ -83,15 +125,13 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private func append(_ text: String) {
         log.append(text)
-        if log.count > 1000 { log.removeFirst(log.count - 1000) }
+        if log.count > 1500 { log.removeFirst(log.count - 1500) }
     }
 
-    private func record(type: String, service: CBUUID? = nil, characteristic: CBUUID? = nil, data: Data? = nil, extra: [String: Any] = [:]) {
+    private func record(type: String, service: CBUUID? = nil, characteristic: CBUUID? = nil,
+                        data: Data? = nil, extra: [String: Any] = [:]) {
         guard isRecording else { return }
-        var e: [String: Any] = [
-            "type": type,
-            "timestamp": Date().timeIntervalSince1970
-        ]
+        var e: [String: Any] = ["type": type, "timestamp": Date().timeIntervalSince1970]
         if let start = recordingStart { e["elapsed"] = Date().timeIntervalSince(start) }
         if let service { e["service"] = service.uuidString }
         if let characteristic { e["characteristic"] = characteristic.uuidString }
@@ -126,6 +166,18 @@ extension BluetoothManager: CBCentralManagerDelegate {
         }
     }
 
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String : Any]) {
+        append("Bluetooth state restored by iOS")
+        if let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+           let p = restored.first {
+            connected = p
+            peripherals[p.identifier] = p
+            connectedName = p.name ?? "Restored Peripheral"
+            p.delegate = self
+            if p.state == .connected { p.discoverServices(nil) }
+        }
+    }
+
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String : Any], rssi RSSI: NSNumber) {
         peripherals[peripheral.identifier] = peripheral
@@ -137,6 +189,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connected = peripheral
         connectedName = peripheral.name ?? "Unknown"
+        writableCharacteristics.removeAll()
+        characteristicMap.removeAll()
         peripheral.delegate = self
         append("Connected: \(connectedName ?? "")")
         peripheral.discoverServices(nil)
@@ -146,10 +200,13 @@ extension BluetoothManager: CBCentralManagerDelegate {
         append("Connect failed: \(error?.localizedDescription ?? "unknown")")
     }
 
-    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        append("Disconnected")
-        connected = nil
-        connectedName = nil
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
+                        timestamp: CFAbsoluteTime, isReconnecting: Bool, error: Error?) {
+        append("Disconnected\(isReconnecting ? " (reconnecting)" : "")")
+        if !isReconnecting {
+            connected = nil
+            connectedName = nil
+        }
     }
 }
 
@@ -174,6 +231,14 @@ extension BluetoothManager: CBPeripheralDelegate {
             if c.properties.contains(.notify) || c.properties.contains(.indicate) {
                 peripheral.setNotifyValue(true, for: c)
             }
+            if c.properties.contains(.write) || c.properties.contains(.writeWithoutResponse) {
+                let id = service.uuid.uuidString + "/" + c.uuid.uuidString
+                characteristicMap[id] = c
+                writableCharacteristics.append(WritableCharacteristic(
+                    id: id, serviceUUID: service.uuid.uuidString,
+                    characteristicUUID: c.uuid.uuidString, properties: props.joined(separator: ", ")
+                ))
+            }
         }
     }
 
@@ -183,6 +248,11 @@ extension BluetoothManager: CBPeripheralDelegate {
         let hex = data.map { String(format: "%02X", $0) }.joined()
         append("← \(characteristic.uuid.uuidString): \(hex)")
         record(type: "value", service: characteristic.service?.uuid, characteristic: characteristic.uuid, data: data)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        append(error == nil ? "✓ Write acknowledged \(characteristic.uuid.uuidString)" :
+            "✗ Write error \(characteristic.uuid.uuidString): \(error!.localizedDescription)")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverDescriptorsFor characteristic: CBCharacteristic, error: Error?) {

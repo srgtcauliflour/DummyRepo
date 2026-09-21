@@ -16,6 +16,7 @@ targets:
         PRODUCT_NAME: BLEInspector
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "BLE Inspector uses Bluetooth to discover and inspect nearby BLE peripherals."
+        INFOPLIST_KEY_UIBackgroundModes: "bluetooth-central"
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""

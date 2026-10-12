@@ -15,13 +15,13 @@ final class AdvertisingProbe: NSObject, ObservableObject, CBPeripheralManagerDel
         case .poweredOn: state = "Bluetooth ready"
         case .poweredOff: state = "Bluetooth switched off"
         case .unauthorized: state = "Bluetooth permission denied"
-        default: state = "Bluetooth unavailable (\\(peripheral.state.rawValue))"
+        default: state = "Bluetooth unavailable (\(peripheral.state.rawValue))"
         }
     }
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
         if let error {
             transmitting = false
-            status = "Advertising failed: \\(error.localizedDescription)"
+            status = "Advertising failed: \(error.localizedDescription)"
         } else {
             transmitting = true
             status = "Advertising requested successfully. This does NOT confirm reception by the toy."

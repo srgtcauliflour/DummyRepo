@@ -16,6 +16,8 @@ final class ToyLabBluetooth: NSObject, ObservableObject, CBCentralManagerDelegat
     @Published var scanning = false
     @Published var devices: [LabDevice] = []
     @Published var connected = "None"
+    @Published var lastAction = "Ready. Tap Scan toys to begin."
+    @Published var selectedDeviceName: String?
     @Published var timeline: [String] = []
     @Published var captureURL: URL?
     private var central: CBCentralManager!
@@ -48,16 +50,20 @@ final class ToyLabBluetooth: NSObject, ObservableObject, CBCentralManagerDelegat
             CBCentralManagerScanOptionAllowDuplicatesKey: true
         ])
         scanning = true
+        lastAction = "Scanning. Switch each toy off/on to identify new broadcasts."
         note("Scanning for GATT and advertisement-based toys")
     }
     func stopScan() {
         central.stopScan()
         scanning = false
+        lastAction = "Scan stopped. \(devices.count) device(s) captured."
         note("Scan stopped")
     }
     func connect(_ id: UUID) {
         guard let peripheral = peripherals[id] else { return }
         stopScan()
+        selectedDeviceName = peripheral.name ?? devices.first(where: { $0.id == id })?.name ?? id.uuidString
+        lastAction = "Connecting to \(selectedDeviceName ?? "device")… Watch Diagnostics for result."
         central.connect(peripheral)
         note("Connecting to \(peripheral.name ?? id.uuidString)")
     }
@@ -66,6 +72,7 @@ final class ToyLabBluetooth: NSObject, ObservableObject, CBCentralManagerDelegat
         central.stopScan()
         scanning = false
         if let current { central.cancelPeripheralConnection(current) }
+        lastAction = "Local scan stopped and connection cancelled. Physical STOP not yet verified."
         note("LOCAL STOP: scan and local connection ended. Physical toy STOP not yet verified.")
     }
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
@@ -101,16 +108,19 @@ final class ToyLabBluetooth: NSObject, ObservableObject, CBCentralManagerDelegat
         current = peripheral
         connected = peripheral.name ?? peripheral.identifier.uuidString
         peripheral.delegate = self
+        lastAction = "Connected to \(connected). Discovering services…"
         note("Connected \(connected); discovering GATT services")
         peripheral.discoverServices(nil)
     }
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        note("Connection failed: \(error?.localizedDescription ?? "unknown")")
+        lastAction = "Connection failed: \(error?.localizedDescription ?? "unknown")"
+        note(lastAction)
     }
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         connected = "None"
         current = nil
-        note("Disconnected \(peripheral.name ?? "")")
+        lastAction = "Disconnected from \(peripheral.name ?? "device")"
+        note(lastAction)
     }
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error { note("Service error: \(error.localizedDescription)"); return }
@@ -154,9 +164,18 @@ final class ToyLabBluetooth: NSObject, ObservableObject, CBCentralManagerDelegat
 struct ToyLabView: View {
     @StateObject private var ble = ToyLabBluetooth()
     @State private var exported: ExportItem?
+    @State private var page = 0
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Picker("View", selection: $page) {
+                        Text("Devices").tag(0)
+                        Text("GATT / Log").tag(1)
+                    }.pickerStyle(.segmented)
+                    Text(ble.lastAction).font(.caption).foregroundStyle(.secondary)
+                }
+                if page == 0 {
                 Section {
                     Text(ble.state)
                     HStack {
@@ -193,13 +212,14 @@ struct ToyLabView: View {
                         }
                     }
                 }
-                Section("Diagnostics") {
-                    ForEach(Array(ble.timeline.suffix(60).reversed().enumerated()), id: \.offset) { _, line in
+                }
+                Section(page == 0 ? "Recent diagnostics" : "GATT and connection diagnostics") {
+                    ForEach(Array(ble.timeline.suffix(page == 0 ? 15 : 200).reversed().enumerated()), id: \.offset) { _, line in
                         Text(line).font(.system(size: 11, design: .monospaced))
                     }
                 }
             }
-            .navigationTitle("Toy Lab")
+            .navigationTitle("Toy Lab v1.1")
             .sheet(item: $exported) { item in ShareSheet(items: [item.url]) }
         }
     }

@@ -5,6 +5,8 @@ final class AdvertisingProbe: NSObject, ObservableObject, CBPeripheralManagerDel
     @Published var state = "Initialising…"
     @Published var status = "Not transmitting"
     @Published var transmitting = false
+    @Published var startedAt: Date?
+    @Published var callbackCount = 0
     private var manager: CBPeripheralManager!
     override init() {
         super.init()
@@ -19,11 +21,13 @@ final class AdvertisingProbe: NSObject, ObservableObject, CBPeripheralManagerDel
         }
     }
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        callbackCount += 1
         if let error {
             transmitting = false
             status = "Advertising failed: \(error.localizedDescription)"
         } else {
-            transmitting = true
+            transmitting = peripheral.isAdvertising
+            startedAt = Date()
             status = "Advertising requested successfully. This does NOT confirm reception by the toy."
         }
     }
@@ -39,6 +43,7 @@ final class AdvertisingProbe: NSObject, ObservableObject, CBPeripheralManagerDel
     func stop() {
         manager.stopAdvertising()
         transmitting = false
+        startedAt = nil
         status = "Local advertising stopped. This is not a verified toy STOP command."
     }
 }
@@ -50,6 +55,10 @@ struct AdvertisingProbeView: View {
             Section("Bluetooth transmitter") {
                 Text(probe.state)
                 Text(probe.status).font(.caption).foregroundStyle(.secondary)
+                LabeledContent("isAdvertising", value: probe.transmitting ? "Yes" : "No")
+                LabeledContent("Start callbacks", value: String(probe.callbackCount))
+                Text("AE8F alone did not produce a physical response in the B2946 test. This is a transport diagnostic, not a command sender.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Button("Start AE8F service probe") { probe.startProbe() }
                     .disabled(probe.state != "Bluetooth ready")
                 Button("STOP TRANSMITTING") { probe.stop() }

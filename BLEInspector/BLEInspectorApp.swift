@@ -4,7 +4,12 @@ import SwiftUI
 struct BLEInspectorApp: App {
     var body: some Scene {
         WindowGroup {
-            ToyLabView()
+            TabView {
+                ToyLabView()
+                    .tabItem { Label("Toy Lab", systemImage: "waveform.path") }
+                AdvertisingProbeView()
+                    .tabItem { Label("Transmit", systemImage: "antenna.radiowaves.left.and.right") }
+            }
         }
     }
 }
